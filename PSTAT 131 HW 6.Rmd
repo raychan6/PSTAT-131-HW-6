@@ -18,6 +18,7 @@ library(rpart.plot)
 library(randomForest)
 library(xgboost)
 library(ranger)
+library(vip)
 
 pokemon = read.csv("pokemon.csv")
 ```
@@ -76,7 +77,7 @@ ROC_AUC starts decreasing after little past a complexity penalty of 0.01. A sing
 tune_res_metrics = collect_metrics(tune_res)
 arrange(tune_res_metrics, desc(mean))
 ```
-The best-performing pruned decision tree on the folds has mean ROC_AUC of 0.7264499. 
+The best-performing pruned decision tree on the folds has a mean ROC_AUC of 0.6482470. 
 
 5.
 ```{r}
@@ -120,4 +121,85 @@ rand_forest_tune_res <- tune_grid(
 
 autoplot(rand_forest_tune_res)
 ```
+
+8.
+```{r}
+rf_tune_res_metrics = collect_metrics(rand_forest_tune_res)
+arrange(rf_tune_res_metrics, desc(mean))
+```
+The best-performing random forest model on the folds has a mean ROC_AUC of 0.6953591.
+
+9.
+```{r}
+best_rf = select_best(rand_forest_tune_res, metric = 'roc_auc')
+best_rand_forest_spec <- rand_forest(mtry = 6, trees = 6, min_n = 8) %>%
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
+best_rf_fit = fit(best_rand_forest_spec, formula = type_1 ~ legendary + generation + sp_atk + attack + speed + defense + 
+                          hp + sp_def, data = pokemon_train)
+vip(best_rf_fit)
+```
+sp_atk is the most important, and legendary is the least important. In the last homework, I thought perhaps each pokemon type has certain stats that are significantly different from other types (so each type is distinct), so this does make some sense. This suggests that sp_atk values are most important when determining a pokemon's primary type. It also makes sense that a pokemon's legendary status would not be strongly related to its primary type. 
+
+10. 
+```{r}
+boost_spec <- boost_tree(trees = tune(), tree_depth = 8) %>%
+  set_engine("xgboost") %>%
+  set_mode("classification")
+
+boost_grid = grid_regular(trees(range = c(10, 2000)), levels = 10)
+
+boost_wf = workflow() %>%
+  add_model(boost_spec) %>%
+  add_recipe(pokemon_recipe)
+
+boost_tune_res <- tune_grid(
+  boost_wf, 
+  resamples = pokemon_folds, 
+  grid = boost_grid, 
+  metrics = metric_set(roc_auc)
+)
+
+autoplot(boost_tune_res)
+```
+The ROC_AUC is highest at just below 250 trees. 
+
+```{r}
+boost_tune_res_metrics = collect_metrics(boost_tune_res)
+arrange(boost_tune_res_metrics, desc(mean))
+```
+The best-performing boosted tree model on the folds has a mean ROC_AUC of 0.6933468.
+
+11. 
+```{r}
+best_performing_models = c('pruned tree', 'random forest', 'boosted tree')
+roc_auc = c(0.6482470, 0.6953591, 0.6933468)
+table = data.frame(best_performing_models, roc_auc)
+table
+```
+Random forest performed the best on the folds. 
+
+```{r}
+rf_final = finalize_workflow(rand_forest_wf, best_rf)
+rf_final_fit = fit(rf_final, data = pokemon_test)
+```
+
+```{r}
+predicted_data = augment(rf_final_fit, new_data = pokemon_test) %>% 
+  select(type_1, starts_with('.pred'))
+predicted_data %>% roc_auc(type_1, .pred_Bug:.pred_Psychic)
+```
+The AUC value of the best performing model on the testing set is 0.9785463.
+
+```{r}
+predicted_data %>% roc_curve(type_1, .pred_Bug:.pred_Psychic) %>% 
+  autoplot()
+```
+
+```{r}
+predicted_data %>% conf_mat(truth = type_1, estimate = .pred_class) %>% 
+  autoplot(type = 'heatmap')
+```
+The model predicts normal and water types the best. It predicts fire types the worst. 
+
 
