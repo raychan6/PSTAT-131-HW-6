@@ -17,6 +17,7 @@ library(janitor)
 library(rpart.plot)
 library(randomForest)
 library(xgboost)
+library(ranger)
 
 pokemon = read.csv("pokemon.csv")
 ```
@@ -93,18 +94,30 @@ class_tree_final_fit %>%
 6.
 ```{r}
 rand_forest_spec <- rand_forest(mtry = tune(), trees = tune(), min_n = tune()) %>%
-  set_engine("ranger", importance = TRUE) %>%
-  set_mode("regression")
+  set_engine("ranger", importance = 'impurity') %>%
+  set_mode("classification")
 ```
 mtry is the number of predictors that will be randomly sampled at each split when creating the tree models. trees number of trees contained in the ensemble. min_n is the minimum number of data points in a node that are required for the node to be split further.
 
 ```{r}
-rand_forest_grid = grid_regular(mtry(range = c(1, 8)), trees(range = c(1, 3)), 
-                                min_n(range = c(1, 50)), levels = 8)
+rand_forest_grid = grid_regular(mtry(range = c(1, 8)), trees(range = c(1, 8)), 
+                                min_n(range = c(1, 8)), levels = 8)
 ```
 mtry cannot be greater than 8 because our model has 8 predictors. mtry = 8 represents a bagging model.
 
 7.
 ```{r}
+rand_forest_wf = workflow() %>%
+  add_model(rand_forest_spec) %>%
+  add_recipe(pokemon_recipe)
 
+rand_forest_tune_res <- tune_grid(
+  rand_forest_wf, 
+  resamples = pokemon_folds, 
+  grid = rand_forest_grid, 
+  metrics = metric_set(roc_auc)
+)
+
+autoplot(rand_forest_tune_res)
 ```
+
